@@ -1,0 +1,2150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>I.P.S. DRAKE // BATHYMETRIC NAV</title>
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=VT323&display=swap');
+
+    :root {
+      --terminal-green: #00ff66;
+      --terminal-dim: #006626;
+      --terminal-bg: #020b05;
+      --terminal-amber: #ffb000;
+    }
+
+    * { box-sizing: border-box; }
+
+    body, html {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      background-color: var(--terminal-bg);
+      font-family: 'VT323', monospace;
+      color: var(--terminal-green);
+      overflow: hidden;
+    }
+
+    /* =========================================================
+       BOOT SEQUENCE
+       ========================================================= */
+
+    #boot-screen {
+      position: fixed;
+      inset: 0;
+      background: #000;
+      color: var(--terminal-green);
+      z-index: 9999;
+      font-family: 'VT323', monospace;
+      font-size: 22px;
+      padding: 40px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      cursor: pointer;
+      transition: opacity 0.8s ease;
+    }
+
+    #boot-screen.hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    #boot-lines {
+      max-width: 700px;
+      margin: 0 auto;
+    }
+
+    #boot-lines div {
+      opacity: 0;
+      white-space: pre;
+    }
+
+    #boot-continue {
+      margin-top: 30px;
+      text-align: center;
+      opacity: 0;
+      animation: blink 1s steps(1) infinite;
+    }
+
+    @keyframes blink {
+      50% { opacity: 0; }
+    }
+
+    @keyframes fadeIn {
+      to { opacity: 1; }
+    }
+
+    /* =========================================================
+       CURVED CRT SCREEN
+       ========================================================= */
+
+    #crt-screen {
+      position: absolute;
+      top: 15px;
+      left: 15px;
+      right: 15px;
+      bottom: 15px;
+
+      border: 3px solid var(--terminal-green);
+      border-radius: 48px / 28px;
+      overflow: hidden;
+
+      box-shadow:
+        0 0 15px rgba(0, 255, 102, 0.4),
+        inset 0 0 15px rgba(0, 255, 102, 0.2),
+        inset 0 0 110px rgba(0, 0, 0, 0.9);
+
+      background: var(--terminal-bg);
+
+      /* Very subtle CRT instability */
+      animation: crtFlicker 7s infinite;
+    }
+
+    @keyframes crtFlicker {
+      0%, 97%, 100% {
+        filter: brightness(1);
+      }
+
+      98% {
+        filter: brightness(1.025);
+      }
+
+      99% {
+        filter: brightness(0.985);
+      }
+    }
+
+    /* =========================================================
+       TOP BAR
+       ========================================================= */
+
+    .top-bar {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 45px;
+
+      border-bottom: 2px solid var(--terminal-green);
+
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+
+      padding: 0 20px;
+
+      z-index: 2001;
+
+      background: rgba(2, 11, 5, 0.9);
+    }
+
+    .status-badge {
+      border: 1px solid var(--terminal-green);
+      padding: 2px 8px;
+      font-size: 18px;
+      letter-spacing: 1px;
+    }
+
+    /* Scanner status */
+
+    .scan-status {
+      border: 1px solid var(--terminal-dim);
+      padding: 2px 8px;
+      font-size: 17px;
+      letter-spacing: 1px;
+      color: var(--terminal-green);
+    }
+
+    .scan-status::before {
+      content: "● ";
+      animation: scanDot 1s steps(1) infinite;
+    }
+
+    @keyframes scanDot {
+      50% {
+        opacity: 0.25;
+      }
+    }
+
+    /* =========================================================
+       SIDEBAR
+       ========================================================= */
+
+    .sidebar {
+      position: absolute;
+      top: 45px;
+      right: 0;
+      bottom: 0;
+      width: 260px;
+
+      border-left: 2px solid var(--terminal-green);
+
+      background: rgba(2, 11, 5, 0.9);
+
+      z-index: 2001;
+
+      padding: 15px;
+
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+
+      pointer-events: auto;
+      overflow-y: auto;
+    }
+
+    .telemetry-block {
+      border: 1px solid var(--terminal-dim);
+      padding: 8px;
+      flex-shrink: 0;
+    }
+
+    .telemetry-title {
+      font-size: 16px;
+      color: var(--terminal-dim);
+
+      border-bottom: 1px solid var(--terminal-dim);
+
+      margin-bottom: 4px;
+
+      letter-spacing: 1px;
+    }
+
+    .telemetry-value {
+      font-size: 22px;
+      letter-spacing: 1px;
+    }
+
+    /* =========================================================
+       LAYER CONTROLS
+       ========================================================= */
+
+    .layer-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+
+      font-size: 18px;
+      padding: 3px 0;
+
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .layer-row input {
+      accent-color: var(--terminal-green);
+    }
+
+    /* =========================================================
+       LOCATION DROPDOWN
+       ========================================================= */
+
+    #location-jump {
+      width: 100%;
+
+      background: #000;
+      color: var(--terminal-green);
+
+      border: 1px solid var(--terminal-dim);
+
+      font-family: 'VT323', monospace;
+      font-size: 18px;
+
+      padding: 4px;
+    }
+
+    #location-jump:focus {
+      outline: none;
+      border-color: var(--terminal-green);
+      box-shadow: 0 0 8px rgba(0, 255, 102, 0.25);
+    }
+
+    /* =========================================================
+       STATIC CORNER CROSSHAIRS
+       ========================================================= */
+
+    .crosshair {
+      position: absolute;
+
+      width: 40px;
+      height: 40px;
+
+      border-top: 2px solid var(--terminal-green);
+      border-left: 2px solid var(--terminal-green);
+
+      pointer-events: none;
+
+      z-index: 1500;
+
+      opacity: 0.6;
+    }
+
+    .crosshair.top-left {
+      top: 60px;
+      left: 20px;
+    }
+
+    .crosshair.bottom-left {
+      bottom: 20px;
+      left: 20px;
+    }
+
+    /* =========================================================
+       MAP
+       ========================================================= */
+
+    #map {
+      position: absolute;
+
+      top: 45px;
+      left: 0;
+      right: 260px;
+      bottom: 0;
+
+      background: var(--terminal-bg);
+
+      cursor: none;
+    }
+
+    #map .leaflet-container {
+      cursor: none;
+      background: var(--terminal-bg);
+    }
+
+    /* =========================================================
+       CURSOR CROSSHAIR
+       ========================================================= */
+
+    .crt-crosshair-v,
+    .crt-crosshair-h {
+      position: absolute;
+
+      background: rgba(0, 255, 102, 0.55);
+
+      pointer-events: none;
+
+      z-index: 2500;
+
+      display: none;
+    }
+
+    .crt-crosshair-v {
+      width: 1px;
+      top: 0;
+      bottom: 0;
+
+      box-shadow: 0 0 4px var(--terminal-green);
+    }
+
+    .crt-crosshair-h {
+      height: 1px;
+      left: 0;
+      right: 0;
+
+      box-shadow: 0 0 4px var(--terminal-green);
+    }
+
+    .crt-crosshair-ring {
+      position: absolute;
+
+      width: 22px;
+      height: 22px;
+
+      margin-left: -11px;
+      margin-top: -11px;
+
+      border: 1px solid rgba(0, 255, 102, 0.8);
+
+      border-radius: 50%;
+
+      pointer-events: none;
+
+      z-index: 2500;
+
+      display: none;
+
+      box-shadow:
+        0 0 5px rgba(0, 255, 102, 0.35);
+    }
+
+    /* =========================================================
+       DECORATIVE CRT SCANLINE
+       ========================================================= */
+
+    .scanline {
+      position: absolute;
+
+      top: 0;
+      left: 0;
+
+      width: 100%;
+      height: 3px;
+
+      background: rgba(0, 255, 102, 0.65);
+
+      box-shadow:
+        0 0 8px var(--terminal-green),
+        0 0 18px rgba(0, 255, 102, 0.45);
+
+      pointer-events: none;
+
+      z-index: 3000;
+    }
+
+    /* =========================================================
+       CRT OVERLAY
+       ========================================================= */
+
+    .crt-overlay {
+      position: absolute;
+
+      top: 0;
+      left: 0;
+
+      width: 100%;
+      height: 100%;
+
+      background:
+        radial-gradient(
+          ellipse at 50% 45%,
+          rgba(0,0,0,0) 55%,
+          rgba(0,0,0,0.6) 100%
+        ),
+        linear-gradient(
+          rgba(18,16,16,0) 50%,
+          rgba(0,0,0,0.45) 50%
+        );
+
+      background-size:
+        100% 100%,
+        100% 4px;
+
+      pointer-events: none;
+
+      z-index: 2999;
+    }
+
+    /* =========================================================
+       GLASS REFLECTION
+       ========================================================= */
+
+    .crt-reflection {
+      position: absolute;
+
+      top: 0;
+      left: 0;
+
+      width: 100%;
+      height: 100%;
+
+      background:
+        linear-gradient(
+          122deg,
+          rgba(255,255,255,0.05) 0%,
+          rgba(255,255,255,0.015) 12%,
+          rgba(255,255,255,0) 24%
+        );
+
+      pointer-events: none;
+
+      z-index: 2999;
+    }
+
+    /* =========================================================
+       SIGNAL GLITCH
+       ========================================================= */
+
+    body.glitch #crt-screen {
+      animation: glitchFlash 0.15s steps(1, end) 1;
+    }
+
+    body.glitch #map {
+      filter: brightness(1.4) hue-rotate(8deg);
+    }
+
+    @keyframes glitchFlash {
+      0%   { transform: translate(0, 0); }
+      25%  { transform: translate(-2px, 1px); }
+      50%  { transform: translate(2px, -1px); }
+      75%  { transform: translate(-1px, 0); }
+      100% { transform: translate(0, 0); }
+    }
+
+    /* =========================================================
+       LOCATION POPUPS
+       ========================================================= */
+
+    .leaflet-popup-content-wrapper {
+      background: #021208;
+
+      border: 2px solid var(--terminal-green);
+
+      color: var(--terminal-green);
+
+      border-radius: 0;
+
+      box-shadow:
+        0 0 15px rgba(0, 255, 102, 0.5);
+
+      font-family: 'VT323', monospace;
+
+      font-size: 20px;
+
+      padding: 5px;
+    }
+
+    .leaflet-popup-tip {
+      background: var(--terminal-green);
+    }
+
+    .town-popup-title {
+      font-size: 24px;
+      font-weight: bold;
+
+      border-bottom: 1px solid var(--terminal-green);
+
+      margin-bottom: 6px;
+
+      padding-bottom: 2px;
+    }
+
+    /* =========================================================
+       CRT LOCATION MARKERS
+       ========================================================= */
+
+    .crt-marker {
+      width: 14px;
+      height: 14px;
+
+      background: var(--terminal-green);
+
+      border: 2px solid #000;
+
+      border-radius: 50%;
+
+      box-shadow:
+        0 0 10px var(--terminal-green);
+
+      animation: pulse 1.5s infinite alternate;
+    }
+
+    @keyframes pulse {
+      from {
+        opacity: 0.4;
+        transform: scale(0.9);
+      }
+
+      to {
+        opacity: 1;
+        transform: scale(1.2);
+      }
+    }
+
+    /* =========================================================
+       SONAR PING
+       ========================================================= */
+
+    .sonar-ping {
+      position: absolute;
+
+      width: 10px;
+      height: 10px;
+
+      border: 2px solid var(--terminal-green);
+
+      border-radius: 50%;
+
+      pointer-events: none;
+
+      z-index: 1600;
+
+      transform: translate(-50%, -50%);
+
+      animation:
+        sonarExpand 1.8s ease-out forwards;
+    }
+
+    @keyframes sonarExpand {
+      0% {
+        width: 10px;
+        height: 10px;
+        opacity: 1;
+      }
+
+      100% {
+        width: 160px;
+        height: 160px;
+        opacity: 0;
+      }
+    }
+
+    /* =========================================================
+       SIGNAL REFRESH CANVAS
+       ========================================================= */
+
+    #signal-refresh {
+      position: absolute;
+
+      inset: 0;
+
+      z-index: 450;
+
+      pointer-events: none;
+
+      /*
+        Very slight screen glow.
+        The JavaScript scanner does the actual refresh effect.
+      */
+
+      mix-blend-mode: screen;
+    }
+
+    .leaflet-tile-pane,
+    .leaflet-overlay-pane {
+      z-index: 400 !important;
+    }
+
+    .leaflet-marker-pane {
+      z-index: 600 !important;
+    }
+
+    .leaflet-popup-pane {
+      z-index: 700 !important;
+    }
+
+    .leaflet-control-zoom {
+      display: none;
+    }
+  </style>
+</head>
+
+<body>
+
+  <!-- =======================================================
+       BOOT SEQUENCE
+       ======================================================= -->
+
+  <div id="boot-screen">
+
+    <div id="boot-lines">
+
+      <div>&gt; INITIALIZING I.P.S. DRAKE NAVCOMP...</div>
+      <div>&gt; LOADING BATHYMETRIC SURVEY DATA...</div>
+      <div>&gt; CALIBRATING SONAR ARRAY...</div>
+      <div>&gt; ESTABLISHING DEEPNET UPLINK... [ OK ]</div>
+      <div>&gt; SYSTEM READY.</div>
+
+    </div>
+
+    <div id="boot-continue">
+      [ CLICK ANYWHERE TO ESTABLISH CONNECTION ]
+    </div>
+
+  </div>
+
+
+  <!-- =======================================================
+       CRT DISPLAY
+       ======================================================= -->
+
+  <div id="crt-screen">
+
+    <div class="scanline"></div>
+
+    <div class="crt-overlay"></div>
+
+    <div class="crt-reflection"></div>
+
+
+    <div class="crosshair top-left"></div>
+
+    <div class="crosshair bottom-left"></div>
+
+
+    <!-- =====================================================
+         TOP BAR
+         ===================================================== -->
+
+    <div class="top-bar">
+
+      <div style="font-size: 24px; letter-spacing: 2px;">
+        BATHYMETRIC NAVIGATION SYSTEM
+      </div>
+
+      <div style="display: flex; gap: 10px;">
+
+        <div class="scan-status">
+          SCAN ACTIVE
+        </div>
+
+        <div class="status-badge">
+          SYS : ONLINE
+        </div>
+
+        <div class="status-badge">
+          I.P.S DRAKE
+        </div>
+
+      </div>
+
+    </div>
+
+
+    <!-- =====================================================
+         MAP
+         ===================================================== -->
+
+    <div id="map">
+
+      <canvas id="signal-refresh"></canvas>
+
+      <div
+        class="crt-crosshair-v"
+        id="crosshair-v">
+      </div>
+
+      <div
+        class="crt-crosshair-h"
+        id="crosshair-h">
+      </div>
+
+      <div
+        class="crt-crosshair-ring"
+        id="crosshair-ring">
+      </div>
+
+    </div>
+
+
+    <!-- =====================================================
+         SIDEBAR
+         ===================================================== -->
+
+    <div class="sidebar">
+
+      <div class="telemetry-block">
+
+        <div class="telemetry-title">
+          TARGET COORDINATES
+        </div>
+
+        <div
+          id="readout-coords"
+          class="telemetry-value">
+          LAT: -- / LON: --
+        </div>
+
+      </div>
+
+
+      <div class="telemetry-block">
+
+        <div class="telemetry-title">
+          DETECTED DEPTH
+        </div>
+
+        <div
+          id="readout-depth"
+          class="telemetry-value">
+          --- METERS
+        </div>
+
+      </div>
+
+
+      <div class="telemetry-block">
+
+        <div class="telemetry-title">
+          TACTICAL REGION
+        </div>
+
+        <div
+          id="readout-region"
+          class="telemetry-value">
+          SCANNING...
+        </div>
+
+      </div>
+
+
+      <div class="telemetry-block">
+
+        <div class="telemetry-title">
+          MAGNIFICATION LEVEL
+        </div>
+
+        <div
+          id="readout-zoom"
+          class="telemetry-value">
+          ZOOM: 03
+        </div>
+
+      </div>
+
+
+      <div class="telemetry-block">
+
+        <div class="telemetry-title">
+          SIGNAL INTEGRITY
+        </div>
+
+        <div
+          id="readout-signal"
+          class="telemetry-value">
+          98%
+        </div>
+
+      </div>
+
+
+      <div class="telemetry-block">
+
+        <div class="telemetry-title">
+          CONTOUR LAYERS
+        </div>
+
+        <label class="layer-row">
+          <input
+            type="checkbox"
+            id="toggle-500"
+            checked>
+          500M INTERVAL
+        </label>
+
+        <label class="layer-row">
+          <input
+            type="checkbox"
+            id="toggle-100">
+          100M INTERVAL
+        </label>
+
+        <label class="layer-row">
+          <input
+            type="checkbox"
+            id="toggle-25">
+          25M INTERVAL
+        </label>
+
+      </div>
+
+
+      <div class="telemetry-block">
+
+        <div class="telemetry-title">
+          JUMP TO LOCATION
+        </div>
+
+        <select id="location-jump">
+
+          <option value="">
+            -- SELECT --
+          </option>
+
+        </select>
+
+      </div>
+
+    </div>
+
+  </div>
+
+
+  <!-- =======================================================
+       LEAFLET
+       ======================================================= -->
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+
+  <script>
+
+    /* =========================================================
+       CONTOUR DATA
+       ========================================================= */
+
+    const CONTOUR_FILES = {
+
+      500: '500m Contours.geojson',
+
+      100: '100m Contours.geojson',
+
+      25: '25m Contours.geojson'
+
+    };
+
+
+    function loadContourLevel(level) {
+
+      return fetch(CONTOUR_FILES[level])
+
+        .then(res => {
+
+          if (!res.ok) {
+
+            throw new Error(
+              `Could not load ${CONTOUR_FILES[level]} ` +
+              `(status ${res.status}) — check the filename/path matches your repo.`
+            );
+
+          }
+
+          return res.json();
+
+        });
+
+    }
+
+
+    /* =========================================================
+       BOOT SEQUENCE
+       ========================================================= */
+
+    const bootLines =
+      document.querySelectorAll('#boot-lines div');
+
+
+    bootLines.forEach((line, i) => {
+
+      line.style.animation =
+        `fadeIn 0.15s forwards`;
+
+      line.style.animationDelay =
+        `${i * 0.45}s`;
+
+    });
+
+
+    setTimeout(() => {
+
+      document.getElementById(
+        'boot-continue'
+      ).style.opacity = '1';
+
+    }, bootLines.length * 450 + 200);
+
+
+    document.getElementById(
+      'boot-screen'
+    ).addEventListener('click', () => {
+
+      document
+        .getElementById('boot-screen')
+        .classList.add('hidden');
+
+    });
+
+
+    /* =========================================================
+       MAP INITIALIZATION
+       ========================================================= */
+
+    const map =
+      L.map('map', {
+        minZoom: 2,
+        maxZoom: 12
+      }).setView([0, 0], 3);
+
+
+    /* =========================================================
+       CONTOUR STYLES
+       ========================================================= */
+
+    const style500m = {
+
+      color: "#9FFFE0",
+      weight: 1.6,
+      opacity: 0.85
+
+    };
+
+
+    const style100m = {
+
+      color: "#63D9B5",
+      weight: 0.9,
+      opacity: 0.60
+
+    };
+
+
+    const style25m = {
+
+      color: "#3AA98C",
+      weight: 0.5,
+      opacity: 0.38
+
+    };
+
+
+    const highlightStyle = {
+
+      color: "#DFFFF4",
+      weight: 2.5,
+      opacity: 1.0
+
+    };
+
+
+    function bindContourEvents(
+      feature,
+      layer,
+      baseStyle
+    ) {
+
+      layer.on({
+
+        mouseover: (e) => {
+
+          e.target.setStyle(
+            highlightStyle
+          );
+
+
+          const props =
+            feature.properties || {};
+
+
+          const depthVal =
+            props.ELEV ??
+            props.elevation ??
+            props.ELEVATION ??
+            props.level ??
+            "UNKNOWN";
+
+
+          document.getElementById(
+            'readout-depth'
+          ).innerText =
+            `${Math.abs(depthVal)} METERS`;
+
+        },
+
+
+        mouseout: (e) => {
+
+          e.target.setStyle(
+            baseStyle
+          );
+
+
+          document.getElementById(
+            'readout-depth'
+          ).innerText =
+            "--- METERS";
+
+        }
+
+      });
+
+    }
+
+
+    let layer500m,
+        layer100m,
+        layer25m;
+
+
+    let minZoomComputed = 3;
+
+
+    Promise.all([
+
+      loadContourLevel(500),
+
+      loadContourLevel(100),
+
+      loadContourLevel(25)
+
+    ])
+
+
+    .then(
+      ([data500, data100, data25]) => {
+
+
+        layer500m =
+          L.geoJSON(
+            data500,
+            {
+              style: style500m,
+
+              onEachFeature:
+                (f, l) =>
+                  bindContourEvents(
+                    f,
+                    l,
+                    style500m
+                  )
+            }
+          );
+
+
+        layer100m =
+          L.geoJSON(
+            data100,
+            {
+              style: style100m,
+
+              onEachFeature:
+                (f, l) =>
+                  bindContourEvents(
+                    f,
+                    l,
+                    style100m
+                  )
+            }
+          );
+
+
+        layer25m =
+          L.geoJSON(
+            data25,
+            {
+              style: style25m,
+
+              onEachFeature:
+                (f, l) =>
+                  bindContourEvents(
+                    f,
+                    l,
+                    style25m
+                  )
+            }
+          );
+
+
+        layer500m.addTo(map);
+
+
+        const bounds =
+          layer500m.getBounds();
+
+
+        map.fitBounds(bounds);
+
+
+        minZoomComputed =
+          map.getBoundsZoom(bounds);
+
+
+        map.setMinZoom(
+          minZoomComputed
+        );
+
+
+        map.setMaxBounds(
+          bounds.pad(0.05)
+        );
+
+
+        const maxZoom =
+          map.getMaxZoom();
+
+
+        const range =
+          maxZoom -
+          minZoomComputed;
+
+
+        const mediumThreshold =
+          minZoomComputed +
+          range * 0.35;
+
+
+        const fineThreshold =
+          minZoomComputed +
+          range * 0.7;
+
+
+        function autoVisibility() {
+
+          const zoom =
+            map.getZoom();
+
+
+          document.getElementById(
+            'readout-zoom'
+          ).innerText =
+            `ZOOM: ${String(zoom).padStart(2, '0')}`;
+
+
+          const wants100 =
+            zoom >= mediumThreshold;
+
+
+          const wants25 =
+            zoom >= fineThreshold;
+
+
+          setLayerActive(
+            layer100m,
+            wants100 &&
+            document.getElementById(
+              'toggle-100'
+            ).checked
+          );
+
+
+          setLayerActive(
+            layer25m,
+            wants25 &&
+            document.getElementById(
+              'toggle-25'
+            ).checked
+          );
+
+
+          document.getElementById(
+            'toggle-100'
+          ).checked =
+            wants100;
+
+
+          document.getElementById(
+            'toggle-25'
+          ).checked =
+            wants25;
+
+        }
+
+
+        map.on(
+          'zoomend',
+          autoVisibility
+        );
+
+
+        autoVisibility();
+
+
+        document.getElementById(
+          'toggle-500'
+        ).addEventListener(
+          'change',
+          (e) => {
+
+            setLayerActive(
+              layer500m,
+              e.target.checked
+            );
+
+          }
+        );
+
+
+        document.getElementById(
+          'toggle-100'
+        ).addEventListener(
+          'change',
+          (e) => {
+
+            setLayerActive(
+              layer100m,
+              e.target.checked
+            );
+
+          }
+        );
+
+
+        document.getElementById(
+          'toggle-25'
+        ).addEventListener(
+          'change',
+          (e) => {
+
+            setLayerActive(
+              layer25m,
+              e.target.checked
+            );
+
+          }
+        );
+
+      }
+    )
+
+
+    .catch(err => {
+
+      console.error(
+        "Error loading bathymetric data:",
+        err
+      );
+
+
+      document.getElementById(
+        'readout-region'
+      ).innerText =
+        "DATA LINK ERROR";
+
+    });
+
+
+    function setLayerActive(
+      layer,
+      shouldShow
+    ) {
+
+      if (!layer) return;
+
+
+      const has =
+        map.hasLayer(layer);
+
+
+      if (
+        shouldShow &&
+        !has
+      ) {
+
+        map.addLayer(layer);
+
+      }
+
+
+      if (
+        !shouldShow &&
+        has
+      ) {
+
+        map.removeLayer(layer);
+
+      }
+
+    }
+
+
+    /* =========================================================
+       LOCATIONS
+       ========================================================= */
+
+    const phosphorIcon =
+      L.divIcon({
+
+        className:
+          'crt-marker-container',
+
+        html:
+          '<div class="crt-marker"></div>',
+
+        iconSize:
+          [14, 14],
+
+        iconAnchor:
+          [7, 7]
+
+      });
+
+
+    const towns = [
+
+      {
+        coords: [51.512, -30.323],
+        name: "MAGELLAN STATION",
+        population: "1,250",
+        depth: "4,200m",
+        owner: "Intergalactic Postal Service"
+      },
+
+      {
+        coords: [51.74, -29.614],
+        name: "DEEPWATER POINT",
+        population: "450",
+        depth: "2,800m",
+        owner: "Intergalactic Postal Service"
+      },
+
+      {
+        coords: [51.857, -30.256],
+        name: "HORIZON STATION",
+        population: "3,100",
+        depth: "1,450m",
+        owner: "Intergalactic Postal Service"
+      },
+
+      {
+        coords: [51.1006, -29.9847],
+        name: "MINERVA FRACTURE MINING STATION",
+        population: "820",
+        depth: "6,100m",
+        owner: "Intergalactic Postal Service"
+      },
+
+      {
+        coords: [52.2779, -30.9811],
+        name: "LANDVICK PORT",
+        population: "2,400",
+        depth: "950m",
+        owner: "Intergalactic Postal Service"
+      },
+
+      {
+        coords: [51.252, -31.017],
+        name: "I.P.S. DISTRIBUTION CENTER",
+        population: "3,600",
+        depth: "3,050m",
+        owner: "Intergalactic Postal Service"
+      }
+
+    ];
+
+
+    const locationSelect =
+      document.getElementById(
+        'location-jump'
+      );
+
+
+    towns.forEach(t => {
+
+
+      const popupHtml = `
+
+        <div class="town-popup">
+
+          <div class="town-popup-title">
+            ${t.name}
+          </div>
+
+          <div>
+            <strong>POPULATION:</strong>
+            ${t.population}
+          </div>
+
+          <div>
+            <strong>DEPTH:</strong>
+            ${t.depth}
+          </div>
+
+          <div>
+            <strong>OWNER:</strong>
+            ${t.owner}
+          </div>
+
+        </div>
+
+      `;
+
+
+      const marker =
+        L.marker(
+          t.coords,
+          {
+            icon:
+              phosphorIcon
+          }
+        )
+
+        .addTo(map)
+
+        .bindPopup(
+          popupHtml
+        );
+
+
+      const opt =
+        document.createElement(
+          'option'
+        );
+
+
+      opt.value =
+        t.name;
+
+
+      opt.innerText =
+        t.name;
+
+
+      opt.dataset.lat =
+        t.coords[0];
+
+
+      opt.dataset.lng =
+        t.coords[1];
+
+
+      locationSelect.appendChild(
+        opt
+      );
+
+
+      opt._marker =
+        marker;
+
+    });
+
+
+    locationSelect.addEventListener(
+      'change',
+      (e) => {
+
+        const opt =
+          e.target.selectedOptions[0];
+
+
+        if (
+          !opt ||
+          !opt.value
+        ) return;
+
+
+        const lat =
+          parseFloat(
+            opt.dataset.lat
+          );
+
+
+        const lng =
+          parseFloat(
+            opt.dataset.lng
+          );
+
+
+        map.flyTo(
+          [lat, lng],
+
+          Math.max(
+            map.getZoom(),
+            6
+          ),
+
+          {
+            duration: 1.2
+          }
+        );
+
+
+        setTimeout(
+          () =>
+            opt._marker.openPopup(),
+          1200
+        );
+
+      }
+    );
+
+
+    /* =========================================================
+       COORDINATE READOUT
+       ========================================================= */
+
+    map.on(
+      'mousemove',
+      (e) => {
+
+
+        const lat =
+          e.latlng.lat.toFixed(2);
+
+
+        const lng =
+          e.latlng.lng.toFixed(2);
+
+
+        document.getElementById(
+          'readout-coords'
+        ).innerText =
+          `N:${lat} / E:${lng}`;
+
+
+        if (lat > 10) {
+
+          document.getElementById(
+            'readout-region'
+          ).innerText =
+            "ABYSSAL BASIN";
+
+        }
+
+        else if (lat < -10) {
+
+          document.getElementById(
+            'readout-region'
+          ).innerText =
+            "MID-OCEAN RIDGE";
+
+        }
+
+        else {
+
+          document.getElementById(
+            'readout-region'
+          ).innerText =
+            "CONTINENTAL SHELF";
+
+        }
+
+      }
+    );
+
+
+    /* =========================================================
+       CURSOR CROSSHAIR
+       ========================================================= */
+
+    const mapEl =
+      document.getElementById(
+        'map'
+      );
+
+
+    const chV =
+      document.getElementById(
+        'crosshair-v'
+      );
+
+
+    const chH =
+      document.getElementById(
+        'crosshair-h'
+      );
+
+
+    const chRing =
+      document.getElementById(
+        'crosshair-ring'
+      );
+
+
+    mapEl.addEventListener(
+      'mouseenter',
+      () => {
+
+        chV.style.display =
+          'block';
+
+        chH.style.display =
+          'block';
+
+        chRing.style.display =
+          'block';
+
+      }
+    );
+
+
+    mapEl.addEventListener(
+      'mouseleave',
+      () => {
+
+        chV.style.display =
+          'none';
+
+        chH.style.display =
+          'none';
+
+        chRing.style.display =
+          'none';
+
+      }
+    );
+
+
+    mapEl.addEventListener(
+      'mousemove',
+      (e) => {
+
+        const rect =
+          mapEl.getBoundingClientRect();
+
+
+        const x =
+          e.clientX -
+          rect.left;
+
+
+        const y =
+          e.clientY -
+          rect.top;
+
+
+        chV.style.left =
+          `${x}px`;
+
+
+        chH.style.top =
+          `${y}px`;
+
+
+        chRing.style.left =
+          `${x}px`;
+
+
+        chRing.style.top =
+          `${y}px`;
+
+      }
+    );
+
+
+    /* =========================================================
+       SONAR PING
+       ========================================================= */
+
+    map.on(
+      'click',
+      (e) => {
+
+        const point =
+          map.latLngToContainerPoint(
+            e.latlng
+          );
+
+
+        const ping =
+          document.createElement(
+            'div'
+          );
+
+
+        ping.className =
+          'sonar-ping';
+
+
+        ping.style.left =
+          `${point.x}px`;
+
+
+        ping.style.top =
+          `${point.y}px`;
+
+
+        mapEl.appendChild(
+          ping
+        );
+
+
+        setTimeout(
+          () => ping.remove(),
+          1800
+        );
+
+      }
+    );
+
+
+    /* =========================================================
+       CRT SIGNAL REFRESH / SCANNER
+       =========================================================
+
+       This is the main part I changed.
+
+       The old version made the entire map progressively dark
+       and only revealed a very narrow band.
+
+       This version behaves more like phosphor persistence:
+
+       - terrain slowly fades
+       - broad refresh area restores visibility
+       - bright scan line marks the current position
+       - soft glow surrounds the line
+       ========================================================= */
+
+
+    const SCAN_CYCLE_MS =
+      10000;
+
+
+    /*
+      Lower number = slower fading.
+
+      0.004 gives a long phosphor persistence.
+    */
+
+    const FADE_ALPHA =
+      0.004;
+
+
+    /*
+      This is HALF the scanner width.
+
+      60 means approximately 120px total.
+    */
+
+    const BAND_HEIGHT =
+      60;
+
+
+    const scanlineEl =
+      document.querySelector(
+        '.scanline'
+      );
+
+
+    const refreshCanvas =
+      document.getElementById(
+        'signal-refresh'
+      );
+
+
+    const refreshCtx =
+      refreshCanvas.getContext(
+        '2d'
+      );
+
+
+    function sizeRefreshCanvas() {
+
+      refreshCanvas.width =
+        mapEl.clientWidth;
+
+
+      refreshCanvas.height =
+        mapEl.clientHeight;
+
+    }
+
+
+    sizeRefreshCanvas();
+
+
+    window.addEventListener(
+      'resize',
+      sizeRefreshCanvas
+    );
+
+
+    function scanLoop(timestamp) {
+
+
+      const progress =
+        (timestamp %
+          SCAN_CYCLE_MS) /
+        SCAN_CYCLE_MS;
+
+
+      /*
+        Smooth vertical scanner position.
+
+        Using an ease curve makes the scanner feel
+        slightly more mechanical and less perfectly digital.
+      */
+
+      const easedProgress =
+        progress < 0.5
+
+          ? 2 * progress * progress
+
+          : 1 -
+            Math.pow(
+              -2 * progress + 2,
+              2
+            ) / 2;
+
+
+      const scanY =
+        easedProgress *
+        refreshCanvas.height;
+
+
+      /* =====================================================
+         DECORATIVE CRT SCAN BAR
+         ===================================================== */
+
+      scanlineEl.style.top =
+        `${easedProgress * 100}%`;
+
+
+      /*
+        Keep the line visible near the top and bottom.
+      */
+
+      const edgeFade =
+        Math.min(
+          easedProgress / 0.035,
+          (1 - easedProgress) / 0.035,
+          1
+        );
+
+
+      scanlineEl.style.opacity =
+        edgeFade;
+
+
+      /* =====================================================
+         PHOSPHOR FADE
+         ===================================================== */
+
+      refreshCtx.globalCompositeOperation =
+        'source-over';
+
+
+      /*
+        Slowly darken the stored image.
+
+        This is intentionally VERY subtle.
+      */
+
+      refreshCtx.fillStyle =
+        `rgba(
+          2,
+          11,
+          5,
+          ${FADE_ALPHA}
+        )`;
+
+
+      refreshCtx.fillRect(
+        0,
+        0,
+        refreshCanvas.width,
+        refreshCanvas.height
+      );
+
+
+      /* =====================================================
+         BROAD SCANNER GLOW
+         ===================================================== */
+
+      refreshCtx.globalCompositeOperation =
+        'destination-out';
+
+
+      const glowHeight =
+        BAND_HEIGHT * 1.8;
+
+
+      const glow =
+        refreshCtx.createLinearGradient(
+          0,
+          scanY - glowHeight,
+          0,
+          scanY + glowHeight
+        );
+
+
+      glow.addColorStop(
+        0,
+        'rgba(0,0,0,0)'
+      );
+
+
+      glow.addColorStop(
+        0.25,
+        'rgba(0,0,0,0.10)'
+      );
+
+
+      glow.addColorStop(
+        0.45,
+        'rgba(0,0,0,0.45)'
+      );
+
+
+      glow.addColorStop(
+        0.50,
+        'rgba(0,0,0,0.75)'
+      );
+
+
+      glow.addColorStop(
+        0.55,
+        'rgba(0,0,0,0.45)'
+      );
+
+
+      glow.addColorStop(
+        0.75,
+        'rgba(0,0,0,0.10)'
+      );
+
+
+      glow.addColorStop(
+        1,
+        'rgba(0,0,0,0)'
+      );
+
+
+      refreshCtx.fillStyle =
+        glow;
+
+
+      refreshCtx.fillRect(
+        0,
+        scanY - glowHeight,
+        refreshCanvas.width,
+        glowHeight * 2
+      );
+
+
+      /* =====================================================
+         PHOSPHOR REFRESH CORE
+         ===================================================== */
+
+      const core =
+        refreshCtx.createLinearGradient(
+          0,
+          scanY - BAND_HEIGHT,
+          0,
+          scanY + BAND_HEIGHT
+        );
+
+
+      core.addColorStop(
+        0,
+        'rgba(0,0,0,0)'
+      );
+
+
+      core.addColorStop(
+        0.35,
+        'rgba(0,0,0,0.30)'
+      );
+
+
+      core.addColorStop(
+        0.50,
+        'rgba(0,0,0,1)'
+      );
+
+
+      core.addColorStop(
+        0.65,
+        'rgba(0,0,0,0.30)'
+      );
+
+
+      core.addColorStop(
+        1,
+        'rgba(0,0,0,0)'
+      );
+
+
+      refreshCtx.fillStyle =
+        core;
+
+
+      refreshCtx.fillRect(
+        0,
+        scanY - BAND_HEIGHT,
+        refreshCanvas.width,
+        BAND_HEIGHT * 2
+      );
+
+
+      /* =====================================================
+         THIN PHOSPHOR LINE
+         ===================================================== */
+
+      refreshCtx.globalCompositeOperation =
+        'source-over';
+
+
+      refreshCtx.fillStyle =
+        'rgba(120,255,190,0.16)';
+
+
+      refreshCtx.fillRect(
+        0,
+        scanY - 1,
+        refreshCanvas.width,
+        2
+      );
+
+
+      /*
+        Slight glow around the refresh line.
+      */
+
+      refreshCtx.shadowColor =
+        'rgba(0,255,102,0.25)';
+
+
+      refreshCtx.shadowBlur =
+        8;
+
+
+      refreshCtx.fillRect(
+        0,
+        scanY,
+        refreshCanvas.width,
+        1
+      );
+
+
+      refreshCtx.shadowBlur =
+        0;
+
+
+      requestAnimationFrame(
+        scanLoop
+      );
+
+    }
+
+
+    requestAnimationFrame(
+      scanLoop
+    );
+
+
+    /* =========================================================
+       SIGNAL INTEGRITY
+       ========================================================= */
+
+    function randomSignalFlicker() {
+
+
+      const signalEl =
+        document.getElementById(
+          'readout-signal'
+        );
+
+
+      const val =
+        92 +
+        Math.floor(
+          Math.random() * 8
+        );
+
+
+      signalEl.innerText =
+        `${val}%`;
+
+
+      /*
+        Occasionally create a small CRT glitch.
+      */
+
+      if (
+        Math.random() < 0.3
+      ) {
+
+        document.body.classList.add(
+          'glitch'
+        );
+
+
+        setTimeout(
+          () =>
+            document.body.classList.remove(
+              'glitch'
+            ),
+          300
+        );
+
+      }
+
+
+      setTimeout(
+        randomSignalFlicker,
+        2500 +
+        Math.random() * 4000
+      );
+
+    }
+
+
+    randomSignalFlicker();
+
+  </script>
+
+</body>
+</html>
